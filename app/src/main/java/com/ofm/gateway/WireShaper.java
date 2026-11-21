@@ -1,6 +1,7 @@
 package com.ofm.gateway;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
@@ -23,12 +24,16 @@ public final class WireShaper {
 
     public static String shape(String rawBody, String agentContextText, String contractsJson,
                                String workDir, String model) {
-        JSONObject body;
         try {
-            body = new JSONObject(rawBody);
+            return shapeInner(rawBody, agentContextText, contractsJson, workDir, model);
         } catch (Exception e) {
-            return rawBody; // pass through if not JSON; upstream will answer
+            return rawBody; // fail-open: pass through untouched
         }
+    }
+
+    private static String shapeInner(String rawBody, String agentContextText, String contractsJson,
+                                     String workDir, String model) throws JSONException {
+        JSONObject body = new JSONObject(rawBody);
 
         injectOfficialPrompt(body, agentContextText, workDir, model);
         renameAndCompleteTools(body, contractsJson);
@@ -36,7 +41,6 @@ public final class WireShaper {
         // v2: tool_choice:'none' is 403. Drop it.
         if ("none".equals(body.optString("tool_choice", ""))) body.remove("tool_choice");
 
-        // chat body constants
         boolean isChat = !body.has("wire") || "chat".equals(body.optString("wire"));
         if (isChat) {
             if (body.optBoolean("stream", false)) {
@@ -53,7 +57,7 @@ public final class WireShaper {
     }
 
     private static void injectOfficialPrompt(JSONObject body, String agentContextText,
-                                             String workDir, String model) {
+                                             String workDir, String model) throws JSONException {
         JSONArray messages = body.optJSONArray("messages");
         if (messages == null) return;
         String id = String.valueOf(model == null ? body.optString("model", "") : model);
@@ -79,23 +83,20 @@ public final class WireShaper {
             if (c instanceof String && ((String) c).contains(PROMPT_MARKER)) return;
             if (anchor < 0) anchor = i;
         }
-        try {
-            if (anchor < 0) {
-                JSONObject sys = new JSONObject();
-                sys.put("role", "system");
-                sys.put("content", prompt);
-                messages.put(0, sys);
-            } else {
-                JSONObject m = messages.getJSONObject(anchor);
-                Object c = m.opt("content");
-                String prior = (c instanceof String) ? ((String) c) : "";
-                m.put("content", prior.isEmpty() ? prompt : (prompt + "\n\n" + prior));
-            }
-        } catch (Exception ignored) {
+        if (anchor < 0) {
+            JSONObject sys = new JSONObject();
+            sys.put("role", "system");
+            sys.put("content", prompt);
+            messages.put(0, sys);
+        } else {
+            JSONObject m = messages.getJSONObject(anchor);
+            Object c = m.opt("content");
+            String prior = (c instanceof String) ? ((String) c) : "";
+            m.put("content", prior.isEmpty() ? prompt : (prompt + "\n\n" + prior));
         }
     }
 
-    private static void renameAndCompleteTools(JSONObject body, String contractsJson) {
+    private static void renameAndCompleteTools(JSONObject body, String contractsJson) throws JSONException {
         JSONObject contracts;
         try {
             contracts = new JSONObject(contractsJson == null ? "{}" : contractsJson);
@@ -121,7 +122,7 @@ public final class WireShaper {
             if (name.isEmpty()) continue;
             if (officialNames.contains(name)) {
                 present.add(name);
-                continue; // already carries the official shape
+                continue;
             }
             String target = officialForClientName(name);
             if (target != null && !present.contains(target)) {

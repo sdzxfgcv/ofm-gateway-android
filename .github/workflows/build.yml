@@ -16,21 +16,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install build tools and platform
+      - name: Show environment
         run: |
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          java -version
+          gradle --version || true
+          ls $ANDROID_HOME/platforms 2>/dev/null || true
+          ls $ANDROID_HOME/build-tools 2>/dev/null || true
 
-      - name: Generate Gradle wrapper
-        run: gradle wrapper --gradle-version 8.7 || true
-        working-directory: ${{ github.workspace }}
+      - name: Accept SDK licenses
+        run: |
+          if [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          fi
 
       - name: Build release APK
         run: |
-          if [ -f ./gradlew ]; then chmod +x ./gradlew && ./gradlew assembleRelease --no-daemon --stacktrace; else gradle assembleRelease --no-daemon --stacktrace; fi
+          gradle wrapper --gradle-version 8.7
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Locate APK
         id: apk
@@ -45,3 +50,4 @@ jobs:
         with:
           name: ofm-gateway-release
           path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
